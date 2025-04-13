@@ -1,8 +1,6 @@
 // std imports
-use std::fmt::format;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Read;
 use std::io::Write;
 use std::io::{self, BufRead};
 use std::path::Path;
