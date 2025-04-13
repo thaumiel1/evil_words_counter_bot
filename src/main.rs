@@ -1,9 +1,11 @@
-use std::fmt::format;
 // std imports
+use std::fmt::format;
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::Read;
 use std::io::Write;
 use std::io::{self, BufRead};
+use std::path::Path;
 
 // Discord bot import
 use poise::serenity_prelude as serenity;
@@ -24,6 +26,66 @@ async fn age(
     let response = format!("{}'s account was created at {}", u.name, u.created_at());
     ctx.say(response).await?;
     Ok(())
+}
+
+#[derive(Debug)]
+struct Entry {
+    username: String,
+    logged_words: usize,
+}
+
+#[poise::command(slash_command, prefix_command)]
+async fn leaderboard(ctx: Context<'_>) -> Result<(), Error> {
+    let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
+    let http = Http::new(&token);
+    let mut entries: Vec<Entry> = Vec::new();
+    if let Ok(lines) = read_lines("./db.txt") {
+        for line in lines.map_while(Result::ok) {
+            let username = get_username_from_user_id(
+                &http,
+                line.split_whitespace()
+                    .next()
+                    .unwrap()
+                    .replace(",", "")
+                    .replace(" ", "")
+                    .parse::<u64>()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            let comma_count = line.chars().filter(|&c| c == ',').count();
+            let entry = Entry {
+                username,
+                logged_words: comma_count - 1,
+            };
+            entries.push(entry);
+        }
+    }
+    entries.sort_by(|a, b| b.logged_words.cmp(&a.logged_words));
+    let text = entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            format!(
+                "{}. {} - {} words",
+                i + 1,
+                entry.username,
+                entry.logged_words
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    ctx.reply(text).await?;
+    Ok(())
+}
+
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -92,9 +154,21 @@ async fn main() {
     let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
     let intents = serenity::GatewayIntents::non_privileged();
 
+    let file_path = "db.txt";
+    let file = File::open(file_path).unwrap();
+    let lines: Vec<String> = io::BufReader::new(file)
+        .lines()
+        .filter_map(Result::ok)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let mut file = File::create(file_path).unwrap();
+    for line in lines {
+        writeln!(file, "{}", line).unwrap();
+    }
+
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![age(), evil()],
+            commands: vec![age(), evil(), leaderboard()],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
